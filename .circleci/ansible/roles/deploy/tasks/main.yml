@@ -1,0 +1,42 @@
+---
+- name: Creates directory
+  file:
+    path: ~/backend
+    state: directory
+
+- name: Copy files
+  copy:
+    src: "artifact.tar.gz"
+    dest: "~/backend/artifact.tar.gz"
+  
+
+- name: Extract 
+  unarchive:
+    src: "~/backend/artifact.tar.gz"
+    dest: "~/backend/"
+    remote_src: yes
+
+
+- name: "Install dependencies for project"
+  shell: |
+    cd ~/backend
+    npm install
+
+- name: "Executing node"
+  command:
+    pm2 start main.js
+  register: execute_node
+    
+  args:
+    chdir: ~/backend/dist
+  environment:
+      ENVIRONMENT: production
+      TYPEORM_CONNECTION: "{{ lookup('env', 'TYPEORM_CONNECTION') }}"
+      TYPEORM_MIGRATIONS_DIR: "./migrations"
+      TYPEORM_MIGRATIONS: "./migrations/*.js"
+      TYPEORM_ENTITIES: "./modules/domain/**/*.entity.js"
+      TYPEORM_HOST: "{{ lookup('env', 'TYPEORM_HOST') }}"
+      TYPEORM_PORT: "{{ lookup('env', 'TYPEORM_PORT') }}"
+      TYPEORM_USERNAME: "{{ lookup('env', 'TYPEORM_USERNAME') }}"
+      TYPEORM_PASSWORD: "{{ lookup('env', 'TYPEORM_PASSWORD') }}"
+      TYPEORM_DATABASE: "{{ lookup('env', 'TYPEORM_DATABASE') }}"
