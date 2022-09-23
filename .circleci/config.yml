@@ -14,9 +14,9 @@ commands:
           name: Destroy environments
           when: on_fail
           command: |
-            echo "Destroying environment: << parameters.workflow_id >> "  
-            
+            echo "Destroying environment: << parameters.workflow_id >> "              
             aws cloudformation delete-stack --stack-name "udapeople-backend-<< parameters.workflow_id >>" 
+
   destroy-environment:
     description: Destroy frontend cloudformation stacks given an workflow ID.
     parameters:
@@ -33,7 +33,6 @@ commands:
             aws cloudformation delete-stack --stack-name "udapeople-frontend-<< parameters.workflow_id >>"
             
       
-
   revert-migrations:
     description: Revert the last migration
     parameters:
@@ -191,6 +190,30 @@ jobs:
       - destroy-environment1:
           workflow_id: "${CIRCLE_WORKFLOW_ID:0:7}"      
 
+  configure-infrastructure:
+    docker:
+      - image: python:3.7-alpine3.11
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints: ["9a:53:53:e9:ae:19:e2:7d:60:26:99:4b:4a:ee:5b:ba"]
+      # attach workspace
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update ansible 
+         
+      - run:
+          name: Configure server
+          command: |
+            cd .circleci/ansible
+            ansible-playbook -i inventory.txt  configure-server.yml
+            
+      # Here's where you will add some code to rollback on failure  
+
+
 workflows:
   default:
     jobs:
@@ -209,3 +232,5 @@ workflows:
           filters:
             branches:
               only: [3rd_Project_master]
+      - configure-infrastructure:
+          requires: [deploy-infrastructure]
