@@ -213,7 +213,7 @@ jobs:
             
       # Here's where you will add some code to rollback on failure
         
-  run-migrations: #run migration job
+  run-migrations: #run migration job fix error
     docker:
       - image: circleci/node:13.8.0
     steps:
