@@ -1,4 +1,4 @@
-version: 2.1
+qversion: 2.1
 orbs:
   slack: circleci/slack@4.1
 
@@ -213,7 +213,7 @@ jobs:
             
       # Here's where you will add some code to rollback on failure
         
-  run-migrations: #run migration job fix error
+  run-migrations:
     docker:
       - image: circleci/node:13.8.0
     steps:
@@ -225,6 +225,7 @@ jobs:
           command: |
             cd backend
             npm install
+            npm run build
             npm run migrations > migrations_dump.txt
       - run:
           name: Send migration results to kvdb
@@ -234,7 +235,149 @@ jobs:
                 # If you are using kvdb.io, generate the bucket ID "9GE4jRtKznmVKRfvdBABBe" in your local terminal first
                 curl https://kvdb.io/HhJsp4QTgZhSevL11KqbTz/migration_${CIRCLE_WORKFLOW_ID:0:7}  -d '1'
             fi
-     # Here's where you will add some code to rollback on failure 
+     # Here's where you will add some code to rollback on failure
+
+  deploy-frontend:
+    docker:
+      - image: amazon/aws-cli
+    steps:
+      - checkout
+      - restore_cache:
+          keys: [frontend-build]   
+      - run:
+          name: Install dependencies
+          command: |
+            yum install -y tar gzip
+            curl -sL https://rpm.nodesource.com/setup_10.x |  bash -
+            yum install -y nodejs npm 
+
+      - attach_workspace:
+          at: ~/
+
+      - run:
+          name: Get backend url
+          command: |
+            export BACKEND_IP=$(aws ec2 describe-instances \
+            --query 'Reservations[*].Instances[*].PublicIpAddress' \
+            --filters "Name=tag:Name,Values= backend-${CIRCLE_WORKFLOW_ID:0:7}" \
+            --output text)
+            export API_URL="http://${BACKEND_IP}:3030"
+            echo "${API_URL}"
+            echo API_URL="http://${BACKEND_IP}:3030" >> frontend/.env
+            cat frontend/.env  
+      - run:
+          name: Deploy frontend objects
+          command: |
+            cd frontend
+            npm install
+            npm run build
+            tar -czvf artifact-"${CIRCLE_WORKFLOW_ID:0:7}".tar.gz dist
+            aws s3 cp dist s3://udapeople-${CIRCLE_WORKFLOW_ID:0:7} --recursive
+      
+      - destroy-environment:
+          workflow_id: "${CIRCLE_WORKFLOW_ID:0:7}"
+      - revert-migrations:
+          workflow_id: "${CIRCLE_WORKFLOW_ID:0:7}"
+
+      # Here's where you will add some code to rollback on failure      
+               
+  deploy-backend:
+    docker:
+      - image: python:3.7-alpine3.11
+    steps:
+      - checkout 
+      - add_ssh_keys:
+          fingerprints: ["9a:53:53:e9:ae:19:e2:7d:60:26:99:4b:4a:ee:5b:ba"]
+      - attach_workspace:
+          at: ~/
+           
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update ansible
+            apk add --update npm
+            apk add --update curl
+            apk add --update tar  gzip
+            apk add python curl
+            curl "https://s3.amazonaws.com/aws-cli/awscli-bundle.zip" -o "awscli-bundle.zip"
+            unzip awscli-bundle.zip
+            ./awscli-bundle/install -i /usr/local/aws -b /usr/local/bin/aws
+
+      - run:
+          name: Deploy backend
+          command: |
+            cd backend
+            npm i
+            npm run build
+            cd ..
+            # Zip the directory
+            tar -C backend -czvf artifact.tar.gz  .
+            cp ./artifact.tar.gz  ~/project/.circleci/ansible/roles/deploy/files
+            cd .circleci/ansible
+            ansible-playbook -i inventory.txt deploy-backend.yml
+      
+      - destroy-environment1:
+          workflow_id: "${CIRCLE_WORKFLOW_ID:0:7}"
+     
+      - revert-migrations:
+          workflow_id: "${CIRCLE_WORKFLOW_ID:0:7}"    
+      
+
+      # Here's where you will add some code to rollback on failure 
+  smoke-test:
+    docker:
+      - image: python:3.7-alpine3.11
+    steps:
+      - checkout
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update curl 
+            apk add --update   gzip
+            apk add python curl
+            curl "https://s3.amazonaws.com/aws-cli/awscli-bundle.zip" -o "awscli-bundle.zip"
+            unzip awscli-bundle.zip
+            ./awscli-bundle/install -i /usr/local/aws -b /usr/local/bin/aws          
+
+      - attach_workspace:
+          at: ~/      
+      - run:
+          name: Get backend url
+          command: |
+            export BACKEND_IP=$(tail -1 .circleci/ansible/inventory.txt )
+            export API_URL="http://${BACKEND_IP}:3030"
+            echo "${API_URL}"
+      - run:
+          name: Backend smoke test.
+          command: |
+            export BACKEND_IP=$(tail -1 .circleci/ansible/inventory.txt )
+            export API_URL="http://${BACKEND_IP}:3030"
+            echo "${API_URL}"
+            if curl  "${API_URL}/api/status"  |  grep "ok"
+            then
+              return 0
+            else
+              echo ${API_URL}
+              return 1
+            fi
+      - run:
+          name: Frontend smoke test.
+          command: |
+            URL="http://udapeople-${CIRCLE_WORKFLOW_ID:0:7}.s3-website-us-east-1.amazonaws.com/#/employees"            
+            echo ${URL} 
+            if curl -s ${URL} | grep "Welcome"
+            then
+                # Change this to 0 after the job fails
+              return 1
+            else
+              return 1
+            fi
+      - destroy-environment1:
+          workflow_id: "${CIRCLE_WORKFLOW_ID:0:7}"
+      - destroy-environment:
+          workflow_id: "${CIRCLE_WORKFLOW_ID:0:7}"
+      - revert-migrations:
+          workflow_id: "${CIRCLE_WORKFLOW_ID:0:7}"
 
 workflows:
   default:
@@ -258,3 +401,9 @@ workflows:
           requires: [deploy-infrastructure]
       - run-migrations:
           requires: [configure-infrastructure]
+      - deploy-frontend:
+          requires: [run-migrations]   
+      - deploy-backend:
+          requires: [run-migrations]   
+      - smoke-test:
+          requires: [deploy-backend, deploy-frontend]
